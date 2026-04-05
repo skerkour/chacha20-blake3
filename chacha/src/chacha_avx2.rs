@@ -23,7 +23,25 @@ struct AlignedU32x8([u32; SIMD_LANES]);
 // [ block1 (32-bits) || block2 (32-bits) || block3 (32-bits) || block4 (32-bits) || block5 (32-bits) ... ]
 // then we perform the normal ChaCha operations on these vectors, meaning that we compute
 // 8 ChaCha blocks in parallel for every operation on these vectors.
-pub fn chacha_avx2<const ROUNDS: usize>(
+//
+// # Safety
+//
+// Caller must ensure that AVX2 is available (e.g. via `is_x86_feature_detected!("avx2")`).
+// The annotation enables the compiler to auto-vectorize the XOR and keystream-extraction
+// loops with AVX2 instructions, not just the explicit intrinsic calls.
+#[target_feature(enable = "avx2")]
+pub unsafe fn chacha_avx2<const ROUNDS: usize>(
+    state: &mut [u32; STATE_WORDS],
+    input: &mut [u8],
+    last_keystream_block: &mut [u8; BLOCK_SIZE],
+) {
+    // SAFETY: AVX2 availability is guaranteed by #[target_feature] + caller contract.
+    unsafe { chacha_avx2_inner::<ROUNDS>(state, input, last_keystream_block) }
+}
+
+/// Inner function keeps the original code structure with a single `unsafe` scope.
+#[target_feature(enable = "avx2")]
+unsafe fn chacha_avx2_inner<const ROUNDS: usize>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
     last_keystream_block: &mut [u8; BLOCK_SIZE],
@@ -31,30 +49,28 @@ pub fn chacha_avx2<const ROUNDS: usize>(
     let mut counter = extract_counter_from_state(state);
     let mut keystream = [0u8; SIMD_LANES * BLOCK_SIZE];
 
-    let mut initial_state: [__m256i; STATE_WORDS] = unsafe {
-        [
-            // constant
-            _mm256_set1_epi32(state[0] as i32),
-            _mm256_set1_epi32(state[1] as i32),
-            _mm256_set1_epi32(state[2] as i32),
-            _mm256_set1_epi32(state[3] as i32),
-            // key
-            _mm256_set1_epi32(state[4] as i32),
-            _mm256_set1_epi32(state[5] as i32),
-            _mm256_set1_epi32(state[6] as i32),
-            _mm256_set1_epi32(state[7] as i32),
-            _mm256_set1_epi32(state[8] as i32),
-            _mm256_set1_epi32(state[9] as i32),
-            _mm256_set1_epi32(state[10] as i32),
-            _mm256_set1_epi32(state[11] as i32),
-            // counter, set it to 0 for now, it is injected later during each iteration of the loop
-            _mm256_set1_epi32(0),
-            _mm256_set1_epi32(0),
-            // nonce
-            _mm256_set1_epi32(state[14] as i32),
-            _mm256_set1_epi32(state[15] as i32),
-        ]
-    };
+    let mut initial_state: [__m256i; STATE_WORDS] = [
+        // constant
+        _mm256_set1_epi32(state[0] as i32),
+        _mm256_set1_epi32(state[1] as i32),
+        _mm256_set1_epi32(state[2] as i32),
+        _mm256_set1_epi32(state[3] as i32),
+        // key
+        _mm256_set1_epi32(state[4] as i32),
+        _mm256_set1_epi32(state[5] as i32),
+        _mm256_set1_epi32(state[6] as i32),
+        _mm256_set1_epi32(state[7] as i32),
+        _mm256_set1_epi32(state[8] as i32),
+        _mm256_set1_epi32(state[9] as i32),
+        _mm256_set1_epi32(state[10] as i32),
+        _mm256_set1_epi32(state[11] as i32),
+        // counter, set it to 0 for now, it is injected later during each iteration of the loop
+        _mm256_set1_epi32(0),
+        _mm256_set1_epi32(0),
+        // nonce
+        _mm256_set1_epi32(state[14] as i32),
+        _mm256_set1_epi32(state[15] as i32),
+    ];
 
     // process input by chunks of 8 * 64 bytes
     for input_blocks in input.chunks_mut(BLOCK_SIZE * SIMD_LANES) {
@@ -74,7 +90,9 @@ pub fn chacha_avx2<const ROUNDS: usize>(
         }
 
         // compute 8 64-byte ChaCha blocks in parallel
-        chacha20_avx2_8blocks::<ROUNDS>(initial_state, &mut keystream);
+        unsafe {
+            chacha20_avx2_8blocks::<ROUNDS>(initial_state, &mut keystream);
+        }
 
         // XOR plaintext with keystream
         input_blocks
@@ -98,8 +116,8 @@ pub fn chacha_avx2<const ROUNDS: usize>(
 /// Compute 8 64-byte ChaCha blocks in parallel using AVX2 vectors.
 /// The keystream is the 8 64-byte blocks computed in parallel.
 /// [ block1 (64 bytes) || block2 (64 bytes) || block3 (64 bytes) || block4 (64 bytes) ... ]
-#[inline(always)]
-fn chacha20_avx2_8blocks<const ROUNDS: usize>(
+#[target_feature(enable = "avx2")]
+unsafe fn chacha20_avx2_8blocks<const ROUNDS: usize>(
     initial_state: [__m256i; STATE_WORDS],
     keystream: &mut [u8; SIMD_LANES * 64],
 ) {

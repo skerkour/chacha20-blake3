@@ -157,13 +157,19 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         {
             #[cfg(target_arch = "x86_64")]
             if is_x86_feature_detected!("avx512f") && plaintext.len() >= 128 {
-                chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                // SAFETY: we just verified AVX-512 is available via runtime detection.
+                unsafe {
+                    chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                }
                 return;
             }
 
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             if is_x86_feature_detected!("avx2") && plaintext.len() >= 128 {
-                chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                // SAFETY: we just verified AVX2 is available via runtime detection.
+                unsafe {
+                    chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                }
                 return;
             }
         }
@@ -173,13 +179,19 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         {
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
             if plaintext.len() >= 128 {
-                chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                // SAFETY: target_feature = "avx512f" guarantees AVX-512 at compile time.
+                unsafe {
+                    chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                }
                 return;
             }
 
             #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
             if plaintext.len() >= 128 {
-                chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                // SAFETY: target_feature = "avx2" guarantees AVX2 at compile time.
+                unsafe {
+                    chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                }
                 return;
             }
         }
